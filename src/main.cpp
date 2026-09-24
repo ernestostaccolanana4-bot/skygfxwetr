@@ -3,6 +3,7 @@
 #include "ini_parser.hpp"
 #include "debugmenu_public.h"
 #include "ModuleList.hpp"
+#include "wetRoads_skygfx.h"
 //#include <fstream>
 
 HMODULE dllModule;
@@ -829,6 +830,7 @@ RenderScene_before(void*)
 bool
 RenderScene_after(void*)
 {
+ WetRoadsSkyGfx_RenderAfterScene();
 	if(config->vehiclePipe == CAR_NEO)
 		CarPipe::RenderEnvTex();
 	else if(config->vehiclePipe == CAR_LCS || config->vehiclePipe == CAR_VCS)
