@@ -14,6 +14,9 @@ namespace
     int g_maskWidth = 0;
     int g_maskHeight = 0;
 
+    RwRaster* g_sceneBackupRaster = nullptr;
+    RwRaster* g_sceneBackupZRaster = nullptr;
+
     static float Clamp01(float value)
     {
         if (value < 0.0f)
@@ -54,6 +57,17 @@ namespace
         g_maskHeight = 0;
     }
 
+    void DestroySceneBackupTargets()
+    {
+        if (g_sceneBackupRaster)
+            RwRasterDestroy(g_sceneBackupRaster);
+        if (g_sceneBackupZRaster)
+            RwRasterDestroy(g_sceneBackupZRaster);
+
+        g_sceneBackupRaster = nullptr;
+        g_sceneBackupZRaster = nullptr;
+    }
+
     bool EnsureMaskTargets()
     {
         if (!Scene.camera)
@@ -86,6 +100,30 @@ namespace
         g_maskWidth = width;
         g_maskHeight = height;
         return true;
+    }
+
+    void EnsureSceneBackupTargets()
+    {
+        if (!Scene.camera)
+            return;
+
+        RwRaster* sceneRaster = RwCameraGetRaster(Scene.camera);
+        if (!sceneRaster)
+            return;
+
+        if (g_sceneBackupRaster && g_sceneBackupZRaster)
+            return;
+
+        DestroySceneBackupTargets();
+
+        g_sceneBackupRaster = RwRasterCreate(sceneRaster->width, sceneRaster->height, sceneRaster->depth, rwRASTERTYPECAMERATEXTURE);
+        g_sceneBackupZRaster = RwRasterCreate(sceneRaster->width, sceneRaster->height, sceneRaster->depth, rwRASTERTYPEZBUFFER);
+
+        if (!g_sceneBackupRaster || !g_sceneBackupZRaster)
+        {
+            DestroySceneBackupTargets();
+            return;
+        }
     }
 
     void RenderMaskDebugQuad()
@@ -174,16 +212,82 @@ void WetRoadsSkyGfx_RenderRoadMask()
     RwRGBA black = { 0, 0, 0, 255 };
     RwCameraClear(Scene.camera, &black, rwCAMERACLEARIMAGE | rwCAMERACLEARZ);
     RwCameraBeginUpdate(Scene.camera);
-
     CRenderer__RenderRoads();
-
     RwCameraEndUpdate(Scene.camera);
+
     RwCameraSetRaster(Scene.camera, sceneRaster);
     RwCameraSetZRaster(Scene.camera, sceneZRaster);
     RwCameraBeginUpdate(Scene.camera);
 
     if (g_maskDebug)
         RenderMaskDebugQuad();
+}
+
+void WetRoadsSkyGfx_ApplyWetComposite()
+{
+    if (!g_enabled || !g_maskRaster || !Scene.camera)
+        return;
+
+    EnsureSceneBackupTargets();
+    if (!g_sceneBackupRaster)
+        return;
+
+    RwRaster* sceneRaster = RwCameraGetRaster(Scene.camera);
+    RwRaster* sceneZRaster = RwCameraGetZRaster(Scene.camera);
+
+    RwCameraEndUpdate(Scene.camera);
+    RwCameraSetRaster(Scene.camera, g_sceneBackupRaster);
+    RwCameraSetZRaster(Scene.camera, g_sceneBackupZRaster);
+    RwCameraClear(Scene.camera, nullptr, rwCAMERACLEARIMAGE | rwCAMERACLEARZ);
+    RwCameraBeginUpdate(Scene.camera);
+
+    // We intentionally do not render the scene again here.
+    // The scene is already being drawn by the game. This backup target is a
+    // placeholder for the actual scene-copy step used in the next stage.
+    // The important part for the prototype is that the mask is now pure road-only.
+    RwCameraEndUpdate(Scene.camera);
+
+    RwCameraSetRaster(Scene.camera, sceneRaster);
+    RwCameraSetZRaster(Scene.camera, sceneZRaster);
+    RwCameraBeginUpdate(Scene.camera);
+
+    // Draw a subtle wet color only where the road mask is non-zero.
+    const float width = static_cast<float>(sceneRaster->width);
+    const float height = static_cast<float>(sceneRaster->height);
+    const float nearZ = RwIm2DGetNearScreenZ();
+
+    RwIm2DVertex quad[4] = {};
+    quad[0].x = 0.0f; quad[0].y = 0.0f; quad[0].z = nearZ; quad[0].rhw = 1.0f;
+    quad[1].x = 0.0f; quad[1].y = height; quad[1].z = nearZ; quad[1].rhw = 1.0f;
+    quad[2].x = width; quad[2].y = height; quad[2].z = nearZ; quad[2].rhw = 1.0f;
+    quad[3].x = width; quad[3].y = 0.0f; quad[3].z = nearZ; quad[3].rhw = 1.0f;
+
+    quad[0].u = 0.0f; quad[0].v = 0.0f;
+    quad[1].u = 0.0f; quad[1].v = 1.0f;
+    quad[2].u = 1.0f; quad[2].v = 1.0f;
+    quad[3].u = 1.0f; quad[3].v = 0.0f;
+
+    for (int i = 0; i < 4; ++i)
+        quad[i].emissiveColor = 0x8FA9B8FF;
+
+    static RwImVertexIndex indices[6] = { 0, 1, 2, 0, 2, 3 };
+
+    CPostEffects::ImmediateModeRenderStatesStore();
+    CPostEffects::ImmediateModeRenderStatesSet();
+
+    RwRenderStateSet(rwRENDERSTATEFOGENABLE, (void*)FALSE);
+    RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)FALSE);
+    RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)FALSE);
+    RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void*)TRUE);
+    RwRenderStateSet(rwRENDERSTATESRCBLEND, (void*)rwBLENDSRCALPHA);
+    RwRenderStateSet(rwRENDERSTATEDESTBLEND, (void*)rwBLENDINVSRCALPHA);
+    RwRenderStateSet(rwRENDERSTATETEXTURERASTER, g_maskRaster);
+    RwRenderStateSet(rwRENDERSTATETEXTUREFILTER, (void*)rwFILTERLINEAR);
+
+    RwIm2DRenderIndexedPrimitive(rwPRIMTYPETRILIST, quad, 4, indices, 6);
+
+    RwRenderStateSet(rwRENDERSTATETEXTURERASTER, nullptr);
+    CPostEffects::ImmediateModeRenderStatesReStore();
 }
 
 void WetRoadsSkyGfx_RenderAfterScene()
@@ -196,4 +300,6 @@ void WetRoadsSkyGfx_RenderAfterScene()
 
     if (g_wetness <= 0.001f)
         return;
+
+    WetRoadsSkyGfx_ApplyWetComposite();
 }
