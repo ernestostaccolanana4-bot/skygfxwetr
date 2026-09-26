@@ -1,9 +1,6 @@
 #include "skygfx.h"
 #include "wetRoads_skygfx.h"
 
-#include <algorithm>
-#include <cmath>
-
 namespace
 {
     bool g_enabled = false;
@@ -17,16 +14,29 @@ namespace
     int g_maskWidth = 0;
     int g_maskHeight = 0;
 
-    float Clamp01(float value)
+    static float Clamp01(float value)
     {
-        return std::clamp(value, 0.0f, 1.0f);
+        if (value < 0.0f)
+            return 0.0f;
+        if (value > 1.0f)
+            return 1.0f;
+        return value;
+    }
+
+    static float Clamp(float value, float minimum, float maximum)
+    {
+        if (value < minimum)
+            return minimum;
+        if (value > maximum)
+            return maximum;
+        return value;
     }
 
     void UpdateWetness()
     {
         const float rain = g_debugForceRain ? 1.0f : Clamp01(CWeather__Rain);
         const float target = rain > 0.02f ? rain : 0.0f;
-        const float step = std::max(CTimer__ms_fTimeStep, 0.0f) * 0.0025f;
+        const float step = (CTimer__ms_fTimeStep > 0.0f ? CTimer__ms_fTimeStep : 0.0f) * 0.0025f;
         g_wetness += (target - g_wetness) * Clamp01(step);
         g_wetness = Clamp01(g_wetness);
     }
@@ -53,8 +63,12 @@ namespace
         if (!sceneRaster)
             return false;
 
-        const int width = std::max(1, static_cast<int>(sceneRaster->width * g_maskResolutionScale));
-        const int height = std::max(1, static_cast<int>(sceneRaster->height * g_maskResolutionScale));
+        const int width = static_cast<int>(sceneRaster->width * g_maskResolutionScale) > 1
+            ? static_cast<int>(sceneRaster->width * g_maskResolutionScale)
+            : 1;
+        const int height = static_cast<int>(sceneRaster->height * g_maskResolutionScale) > 1
+            ? static_cast<int>(sceneRaster->height * g_maskResolutionScale)
+            : 1;
 
         if (g_maskRaster && g_maskWidth == width && g_maskHeight == height)
             return true;
@@ -101,12 +115,12 @@ namespace
         vertices[2].u = 1.0f; vertices[2].v = 1.0f;
         vertices[3].u = 1.0f; vertices[3].v = 0.0f;
 
-        static const RwImVertexIndex indices[6] = { 0, 1, 2, 0, 2, 3 };
+        static RwImVertexIndex indices[6] = { 0, 1, 2, 0, 2, 3 };
 
         CPostEffects::ImmediateModeRenderStatesStore();
         CPostEffects::ImmediateModeRenderStatesSet();
         RwRenderStateSet(rwRENDERSTATETEXTURERASTER, g_maskRaster);
-        RwRenderStateSet(rwRENDERSTATETEXTUREFILTER, (void*)rwFILTERPOINT);
+        RwRenderStateSet(rwRENDERSTATETEXTUREFILTER, (void*)rwFILTERNEAREST);
         RwD3D9SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
         RwD3D9SetRenderState(D3DRS_ZENABLE, FALSE);
         RwD3D9SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
@@ -134,7 +148,7 @@ void WetRoadsSkyGfx_SetMaskDebug(bool enabled)
 
 void WetRoadsSkyGfx_SetMaskResolutionScale(float scale)
 {
-    g_maskResolutionScale = std::clamp(scale, 0.25f, 1.0f);
+    g_maskResolutionScale = Clamp(scale, 0.25f, 1.0f);
     DestroyMaskTargets();
 }
 
@@ -153,8 +167,6 @@ void WetRoadsSkyGfx_RenderRoadMask()
     if (!sceneRaster)
         return;
 
-    // Render roads into a separate camera raster. The original scene target and
-    // depth raster are restored before returning to SkyGFX.
     RwCameraEndUpdate(Scene.camera);
     RwCameraSetRaster(Scene.camera, g_maskRaster);
     RwCameraSetZRaster(Scene.camera, g_maskZRaster);
@@ -184,8 +196,4 @@ void WetRoadsSkyGfx_RenderAfterScene()
 
     if (g_wetness <= 0.001f)
         return;
-
-    // The mask is now available for the future selective composite. The first
-    // implementation intentionally stops here unless mask-debug is enabled.
-    // Next stage: copy the scene raster and composite using a ps_2_a shader.
 }
