@@ -75,6 +75,7 @@ namespace
 	};
 
 	RwRaster *roadMaskRaster;
+	RwRaster *roadMaskZRaster;
 	IDirect3DTexture9 *roadMaskTexture;
 	bool roadMaskInitLogged;
 	bool roadMaskPathWarningLogged;
@@ -186,10 +187,13 @@ namespace
 
 		if(roadMaskRaster)
 			RwRasterDestroy(roadMaskRaster);
+		if(roadMaskZRaster)
+			RwRasterDestroy(roadMaskZRaster);
 		roadMaskRaster = RwRasterCreate(cameraRaster->width, cameraRaster->height, cameraRaster->depth, rwRASTERTYPECAMERATEXTURE);
+		roadMaskZRaster = RwRasterCreate(cameraRaster->width, cameraRaster->height, 0, rwRASTERTYPEZBUFFER);
 		ReleaseRoadMaskTexture();
 
-		if(roadMaskRaster == nil){
+		if(roadMaskRaster == nil || roadMaskZRaster == nil){
 			if(!roadMaskInitLogged){
 				LogRoadMaskMessage("WetRoads: Failed to create road mask raster");
 				roadMaskInitLogged = true;
@@ -315,6 +319,15 @@ namespace
 		if(roadMaskIndices.empty())
 			return;
 
+		void *prevTexture, *prevVertexAlpha, *prevZTest, *prevZWrite, *prevSrcBlend, *prevDstBlend, *prevFog;
+		RwRenderStateGet(rwRENDERSTATETEXTURERASTER, &prevTexture);
+		RwRenderStateGet(rwRENDERSTATEVERTEXALPHAENABLE, &prevVertexAlpha);
+		RwRenderStateGet(rwRENDERSTATEZTESTENABLE, &prevZTest);
+		RwRenderStateGet(rwRENDERSTATEZWRITEENABLE, &prevZWrite);
+		RwRenderStateGet(rwRENDERSTATESRCBLEND, &prevSrcBlend);
+		RwRenderStateGet(rwRENDERSTATEDESTBLEND, &prevDstBlend);
+		RwRenderStateGet(rwRENDERSTATEFOGENABLE, &prevFog);
+
 		RwRenderStateSet(rwRENDERSTATETEXTURERASTER, nil);
 		RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void*)FALSE);
 		RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)TRUE);
@@ -327,8 +340,13 @@ namespace
 			roadMaskVertices.data(), (int)roadMaskVertices.size(),
 			roadMaskIndices.data(), (int)roadMaskIndices.size());
 
-		RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)TRUE);
-		RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void*)TRUE);
+		RwRenderStateSet(rwRENDERSTATETEXTURERASTER, prevTexture);
+		RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, prevVertexAlpha);
+		RwRenderStateSet(rwRENDERSTATEZTESTENABLE, prevZTest);
+		RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, prevZWrite);
+		RwRenderStateSet(rwRENDERSTATESRCBLEND, prevSrcBlend);
+		RwRenderStateSet(rwRENDERSTATEDESTBLEND, prevDstBlend);
+		RwRenderStateSet(rwRENDERSTATEFOGENABLE, prevFog);
 	}
 
 	void DrawRoadMaskDebugPreview(void)
@@ -360,16 +378,25 @@ namespace
 		v[3].u = 1.0f; v[3].v = 0.0f;
 
 		RwImVertexIndex idx[6] = { 0, 1, 2, 0, 2, 3 };
+		void *prevTexture, *prevFog, *prevZTest, *prevZWrite, *prevVertexAlpha;
+		RwRenderStateGet(rwRENDERSTATETEXTURERASTER, &prevTexture);
+		RwRenderStateGet(rwRENDERSTATEFOGENABLE, &prevFog);
+		RwRenderStateGet(rwRENDERSTATEZTESTENABLE, &prevZTest);
+		RwRenderStateGet(rwRENDERSTATEZWRITEENABLE, &prevZWrite);
+		RwRenderStateGet(rwRENDERSTATEVERTEXALPHAENABLE, &prevVertexAlpha);
+
 		RwRenderStateSet(rwRENDERSTATETEXTURERASTER, roadMaskRaster);
 		RwRenderStateSet(rwRENDERSTATEFOGENABLE, (void*)FALSE);
 		RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)FALSE);
 		RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)FALSE);
 		RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void*)FALSE);
 		RwIm2DRenderIndexedPrimitive(rwPRIMTYPETRILIST, v, 4, idx, 6);
-		RwRenderStateSet(rwRENDERSTATETEXTURERASTER, nil);
-		RwRenderStateSet(rwRENDERSTATEZTESTENABLE, (void*)TRUE);
-		RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, (void*)TRUE);
-		RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, (void*)TRUE);
+
+		RwRenderStateSet(rwRENDERSTATETEXTURERASTER, prevTexture);
+		RwRenderStateSet(rwRENDERSTATEFOGENABLE, prevFog);
+		RwRenderStateSet(rwRENDERSTATEZTESTENABLE, prevZTest);
+		RwRenderStateSet(rwRENDERSTATEZWRITEENABLE, prevZWrite);
+		RwRenderStateSet(rwRENDERSTATEVERTEXALPHAENABLE, prevVertexAlpha);
 	}
 }
 
@@ -390,16 +417,25 @@ RenderRoadMask(void)
 		return;
 
 	RwRaster *cameraRaster = RwCameraGetRaster(camera);
-	RwRaster *zRaster = RwCameraGetZRaster(camera);
+	RwRaster *sceneZRaster = RwCameraGetZRaster(camera);
 	if(cameraRaster == nil)
 		return;
 
+	RwRaster *renderZRaster = roadMaskZRaster;
+	bool useSceneDepth = false;
+	if(sceneZRaster &&
+	   sceneZRaster->width == roadMaskRaster->width &&
+	   sceneZRaster->height == roadMaskRaster->height){
+		renderZRaster = sceneZRaster;
+		useSceneDepth = true;
+	}
+
 	RwCameraEndUpdate(camera);
 	RwCameraSetRaster(camera, roadMaskRaster);
-	RwCameraSetZRaster(camera, zRaster);
+	RwCameraSetZRaster(camera, renderZRaster);
 
 	RwRGBA clearColor = { 0, 0, 0, 255 };
-	RwCameraClear(camera, &clearColor, rwCAMERACLEARIMAGE);
+	RwCameraClear(camera, &clearColor, useSceneDepth ? rwCAMERACLEARIMAGE : (rwCAMERACLEARIMAGE | rwCAMERACLEARZ));
 	RwCameraBeginUpdate(camera);
 
 	AcquireRoadMaskTextureFromCurrentTarget();
@@ -420,7 +456,7 @@ RenderRoadMask(void)
 
 	RwCameraEndUpdate(camera);
 	RwCameraSetRaster(camera, cameraRaster);
-	RwCameraSetZRaster(camera, zRaster);
+	RwCameraSetZRaster(camera, sceneZRaster);
 	RwCameraBeginUpdate(camera);
 
 	DrawRoadMaskDebugPreview();
@@ -445,5 +481,9 @@ ShutdownRoadMask(void)
 	if(roadMaskRaster){
 		RwRasterDestroy(roadMaskRaster);
 		roadMaskRaster = nil;
+	}
+	if(roadMaskZRaster){
+		RwRasterDestroy(roadMaskZRaster);
+		roadMaskZRaster = nil;
 	}
 }
