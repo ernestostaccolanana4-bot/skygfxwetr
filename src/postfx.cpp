@@ -1,5 +1,6 @@
 #include "skygfx.h"
 #include "ModuleList.hpp"
+#include "roadmask.h"
 
 RwIm2DVertex *colorfilterVerts = (RwIm2DVertex*)0xC400D8;
 RwImVertexIndex *colorfilterIndices = (RwImVertexIndex*)0x8D5174;
@@ -1327,6 +1328,8 @@ static RwMatrix YUV2RGB = {
 void
 CPostEffects::DrawFinalEffects(void)
 {
+	RenderRoadMask();
+
 	if(!m_bYCbCrFilter)
 		return;
 
