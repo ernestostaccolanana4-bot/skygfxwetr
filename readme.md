@@ -23,3 +23,15 @@ For example:
     RWSDK36: <some path>\RWSDK\RW36\Graphics\rwsdk\include\d3d9
 
 Use premake to generate a solution.
+
+### ReShade ROADMASK semantic (qUINT SSR integration)
+
+This build exports a per-frame `ROADMASK` texture semantic from the internal road-path mask renderer (white = paved corridor, black = no reflection).
+External ReShade shaders (such as `qUINT_ssr.fx`) can consume it like this:
+
+```hlsl
+texture texRoadMask : ROADMASK;
+sampler sRoadMask { Texture = texRoadMask; };
+```
+
+Then gate SSR blend/composite by `tex2D(sRoadMask, uv).r`.

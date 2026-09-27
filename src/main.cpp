@@ -3,6 +3,8 @@
 #include "ini_parser.hpp"
 #include "debugmenu_public.h"
 #include "ModuleList.hpp"
+#include "roadmask.h"
+#include "reshade.hpp"
 //#include <fstream>
 
 HMODULE dllModule;
@@ -59,6 +61,31 @@ RwImVertexIndex* TempBufferRenderIndexList = reinterpret_cast<RwImVertexIndex*>(
 RwIm3DVertex* TempVertexBuffer = reinterpret_cast<RwIm3DVertex*>(0xC4D958);
 
 CVector2D windPos;
+bool gReshadeAddonRegistered;
+
+static void
+BindRoadMaskToReShade(reshade::api::effect_runtime *runtime)
+{
+	if(runtime == nil)
+		return;
+
+	reshade::api::resource_view view = { 0 };
+	if(IDirect3DTexture9 *texture = GetRoadMaskTexture())
+		view = { (uint64_t)(uintptr_t)texture };
+	runtime->update_texture_bindings("ROADMASK", view, {});
+}
+
+static void
+OnReShadeInitEffectRuntime(reshade::api::effect_runtime *runtime)
+{
+	BindRoadMaskToReShade(runtime);
+}
+
+static void
+OnReShadePresent(reshade::api::effect_runtime *runtime)
+{
+	BindRoadMaskToReShade(runtime);
+}
 
 void refreshMenu(void);
 
@@ -871,7 +898,8 @@ void envmaphooks(void);
 envmaphooks();
 	neoInit();
 	initTexDB();
-	InitialiseGame();
+InitRoadMask();
+InitialiseGame();
 }
 
 void* RwIm3DTransform(RwIm3DVertex* pVerts, RwUInt32 numVerts, RwMatrix* ltm, RwUInt32 flags) {
@@ -1929,6 +1957,20 @@ void hooktexdb();
 		// remove some shadows for mobile test
 		//Nop(0x53E0C3, 5);
 		//Nop(0x53E0C8, 5);
+
+		if(reshade::register_addon(hInst)){
+			reshade::register_event<reshade::addon_event::init_effect_runtime>(OnReShadeInitEffectRuntime);
+			reshade::register_event<reshade::addon_event::reshade_present>(OnReShadePresent);
+			gReshadeAddonRegistered = true;
+		}
+	}else if(reason == DLL_PROCESS_DETACH){
+		ShutdownRoadMask();
+		if(gReshadeAddonRegistered){
+			reshade::unregister_event<reshade::addon_event::reshade_present>(OnReShadePresent);
+			reshade::unregister_event<reshade::addon_event::init_effect_runtime>(OnReShadeInitEffectRuntime);
+			reshade::unregister_addon(hInst);
+			gReshadeAddonRegistered = false;
+		}
 	}
 
 	return TRUE;
